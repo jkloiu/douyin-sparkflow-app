@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页面板（style4.css :root）保持同一套令牌 -->
+    <color name="appBg">#FF0E131D</color>
+    <color name="panel">#FF151B26</color>
+    <color name="line">#FF232B38</color>
+    <color name="orange">#FFFF7A45</color>
+    <color name="orangeDeep">#FFE94F1E</color>
+    <color name="txt">#FFE8ECF4</color>
+    <color name="txt2">#FF8B95A7</color>
+</resources>

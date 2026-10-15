@@ -1,0 +1,11 @@
+# 本仓库文件按字节原样入库，不做行尾转换
+* -text
+
+# 二进制资源
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.apk binary
+*.jks binary
+*.idsig binary

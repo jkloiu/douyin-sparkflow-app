@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">火花守护</string>
+    <string name="notify_channel_name">火花守护通知</string>
+    <string name="notify_channel_desc">日报、定时任务结果等提醒</string>
+</resources>

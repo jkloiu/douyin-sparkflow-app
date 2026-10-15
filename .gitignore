@@ -1,0 +1,16 @@
+# 签名密钥与口令绝不入库（换机器从备份恢复 keystore/，口令走环境变量）
+keystore/
+*.jks
+
+# 构建中间产物与安装包（可由 tools/build.py 重新产出）
+build/
+dist/*.apk
+dist/*.idsig
+__pycache__/
+*.pyc
+
+# 图标设计过程稿
+contact_sheet.png
+preview_icon.png
+preview_stat.png
+refine_sheet.png
