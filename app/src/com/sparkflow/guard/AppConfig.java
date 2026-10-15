@@ -10,8 +10,8 @@ import android.content.SharedPreferences;
 public final class AppConfig {
 
     /** 当前构建的版本号，必须与 AndroidManifest 的 versionCode 一致（打包脚本会校验）。 */
-    public static final int VERSION_CODE = 2;
-    public static final String VERSION_NAME = "1.0.1";
+    public static final int VERSION_CODE = 3;
+    public static final String VERSION_NAME = "1.0.2";
 
     /** 面板地址与默认页面。App 内可在「客户端设置」里改。 */
     public static final String DEFAULT_BASE = "http://121.36.38.180:16080";
@@ -150,5 +150,16 @@ public final class AppConfig {
 
     public static void setPendingCode(Context c, int v) {
         sp(c).edit().putInt("pending_code", v).apply();
+    }
+
+    /* ---------- 后台存活（电池优化白名单） ---------- */
+
+    /** 是否已经提示过「允许后台运行」，避免每次启动都弹。 */
+    public static boolean batteryAsked(Context c) {
+        return sp(c).getBoolean("battery_asked", false);
+    }
+
+    public static void setBatteryAsked(Context c, boolean v) {
+        sp(c).edit().putBoolean("battery_asked", v).apply();
     }
 }

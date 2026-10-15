@@ -42,6 +42,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 
 import org.json.JSONObject;
 
@@ -81,6 +82,7 @@ public class MainActivity extends Activity {
         }
         NotifyHelper.ensureChannel(this);
         UpdateJobService.rescheduleAll(this);
+        maybeAskBattery();   // [1.0.2] 未加电池优化白名单时提示一次（只提示一次）
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#0E131D"));
@@ -533,6 +535,7 @@ public class MainActivity extends Activity {
                         UpdateJobService.rescheduleAll(MainActivity.this);
                     } else {
                         NotifyJobService.cancel(MainActivity.this);
+                        NotifyJobService.cancelAlarm(MainActivity.this);   // [1.0.2] 连同兜底闹钟一起停
                     }
                 }
             } catch (Throwable t) {
@@ -675,6 +678,18 @@ public class MainActivity extends Activity {
         chGrant.setEnabled(false);
         ll.addView(chGrant);
 
+        /* [1.0.2] 后台常驻：不加白名单的话，息屏后系统会冻结后台轮询 → 只有打开 App 才收到通知 */
+        final Button bBg = new Button(this);
+        bBg.setText(ignoringBatteryOpt()
+                ? "后台运行：已允许（点此复核）"
+                : "允许后台运行（推荐，否则可能收不到通知）");
+        bBg.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                requestIgnoreBatteryOpt();
+            }
+        });
+        ll.addView(bBg);
+
         new AlertDialog.Builder(this)
                 .setTitle("客户端设置")
                 .setView(sc)
@@ -696,6 +711,7 @@ public class MainActivity extends Activity {
                             }, "spark-poll-after-save").start();
                         } else {
                             NotifyJobService.cancel(MainActivity.this);
+                            NotifyJobService.cancelAlarm(MainActivity.this);   // [1.0.2] 连同兜底闹钟一起停
                         }
                         String now = AppConfig.base(MainActivity.this) + AppConfig.PAGE_PATH;
                         if (!now.equals(web.getUrl())) {
@@ -711,6 +727,68 @@ public class MainActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /* ==================================================================
+       [1.0.2] 后台存活：电池优化白名单
+       ROM 的深度省电会在息屏后冻结后台任务，JobScheduler / AlarmManager 都可能被压制，
+       用户看到的就是「App 只有打开后才会通知」。把本应用加入白名单是最有效的一步。
+       ================================================================== */
+
+    private boolean ignoringBatteryOpt() {
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void requestIgnoreBatteryOpt() {
+        if (ignoringBatteryOpt()) {
+            toast("已经允许后台运行");
+            return;
+        }
+        try {
+            Intent it = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            it.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(it);
+        } catch (Throwable t) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Throwable t2) {
+                toast("请到 系统设置 → 应用 → 火花守护 → 电池，允许后台运行");
+            }
+        }
+    }
+
+    /** 首次启动提示一次（选「以后再说」就不再打扰）。 */
+    private void maybeAskBattery() {
+        if (ignoringBatteryOpt() || AppConfig.batteryAsked(this)) {
+            return;
+        }
+        AppConfig.setBatteryAsked(this, true);
+        ui.postDelayed(new Runnable() {
+            public void run() {
+                if (isFinishing()) {
+                    return;
+                }
+                try {
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("让通知更可靠")
+                            .setMessage("系统会限制后台运行，可能出现「只有打开 App 才收到通知」。\n\n"
+                                    + "建议允许「火花守护」在后台常驻运行（加入电池优化白名单）。")
+                            .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface d, int w) {
+                                    requestIgnoreBatteryOpt();
+                                }
+                            })
+                            .setNegativeButton("以后再说", null)
+                            .show();
+                } catch (Throwable ignore) {
+                }
+            }
+        }, 2500);
     }
 
     private TextView label(String s) {

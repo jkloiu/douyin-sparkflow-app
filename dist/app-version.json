@@ -1,10 +1,10 @@
 {
-  "versionCode": 2,
-  "versionName": "1.0.1",
-  "url": "http://121.36.38.180:16080/static/sparkflow-1.0.1.apk",
-  "size": 142029,
-  "md5": "cc7e98c710f161d15a9facfb3c1fc027",
-  "notes": "火花守护 1.0.1",
+  "versionCode": 3,
+  "versionName": "1.0.2",
+  "url": "http://121.36.38.180:16080/static/sparkflow-1.0.2.apk",
+  "size": 146125,
+  "md5": "3d60bbb4ddbbe6f36d0be62c7fa159a8",
+  "notes": "火花守护 1.0.2",
   "force": false,
   "page": "http://121.36.38.180:16080/static/console4.html"
 }

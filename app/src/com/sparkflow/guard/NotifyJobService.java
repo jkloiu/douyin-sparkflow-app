@@ -1,11 +1,15 @@
 package com.sparkflow.guard;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.app.job.JobInfo;
 import android.app.job.JobParameters;
 import android.app.job.JobScheduler;
 import android.app.job.JobService;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -54,6 +58,56 @@ public class NotifyJobService extends JobService {
             JobScheduler js = (JobScheduler) c.getSystemService(Context.JOB_SCHEDULER_SERVICE);
             if (js != null) {
                 js.cancel(JOB_ID);
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    /* ------------------------------------------------------------------
+       [1.0.2] AlarmManager 兜底通道
+       JobScheduler 的周期任务只是「系统有空时跑」：Doze 深睡时会被拖到维护窗口，
+       部分 ROM 的省电策略更会把它冻结 —— 表现就是「只有打开 App 才收到通知」。
+       这里额外排一个 15 分钟后的 RTC_WAKEUP 闹钟（setAndAllowWhileIdle 在
+       Doze 下也能唤醒），跑完由 receiver 再排下一次（自续），与 JobScheduler 双保险。
+       ------------------------------------------------------------------ */
+
+    static final int ALARM_REQ = 9003;
+    static final long ALARM_PERIOD_MS = 15L * 60L * 1000L;
+
+    private static PendingIntent alarmPi(Context c) {
+        Intent i = new Intent(c, NotifyAlarmReceiver.class);
+        i.setAction("com.sparkflow.guard.POLL");
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getBroadcast(c, ALARM_REQ, i, flags);
+    }
+
+    /** 排下一次唤醒（每次执行后都要重新排，闹钟是一次性的）。 */
+    public static void scheduleAlarm(Context c) {
+        try {
+            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) {
+                return;
+            }
+            PendingIntent pi = alarmPi(c);
+            long at = System.currentTimeMillis() + ALARM_PERIOD_MS;
+            if (Build.VERSION.SDK_INT >= 23) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+            } else {
+                am.set(AlarmManager.RTC_WAKEUP, at, pi);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "scheduleAlarm: " + t);
+        }
+    }
+
+    public static void cancelAlarm(Context c) {
+        try {
+            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am != null) {
+                am.cancel(alarmPi(c));
             }
         } catch (Throwable ignore) {
         }

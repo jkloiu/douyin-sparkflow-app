@@ -52,6 +52,7 @@ public class UpdateJobService extends JobService {
     public static void rescheduleAll(Context c) {
         NotifyJobService.schedule(c);
         schedule(c);
+        NotifyJobService.scheduleAlarm(c);   // [1.0.2] AlarmManager 兜底：只靠 JobScheduler 会被 Doze/省电策略冻住
     }
 
     @Override
