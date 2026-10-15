@@ -10,8 +10,8 @@ import android.content.SharedPreferences;
 public final class AppConfig {
 
     /** 当前构建的版本号，必须与 AndroidManifest 的 versionCode 一致（打包脚本会校验）。 */
-    public static final int VERSION_CODE = 3;
-    public static final String VERSION_NAME = "1.0.2";
+    public static final int VERSION_CODE = 4;
+    public static final String VERSION_NAME = "1.0.3";
 
     /** 面板地址与默认页面。App 内可在「客户端设置」里改。 */
     public static final String DEFAULT_BASE = "http://121.36.38.180:16080";
@@ -134,13 +134,46 @@ public final class AppConfig {
         sp(c).edit().putLong("last_seen_t", sec).apply();
     }
 
-    /** 已提示过的新版本号，避免同一版本反复弹。 */
-    public static int promptedCode(Context c) {
-        return sp(c).getInt("prompted_code", 0);
+    /*
+     * [1.0.3] 提示节流：不要再按「版本号」记「已提示过」，那样只要提示过一次
+     * （哪怕用户点的是「稍后」、哪怕下载/安装失败）就永远不会再提醒。
+     * 改成按时间节流：该提醒就提醒，间隔到了继续提醒，直到用户真的升级上去。
+     */
+
+    /** 「发现新版本」提示 / 通知的间隔（秒）。 */
+    public static final long PROMPT_INTERVAL = 6L * 3600L;
+    /** 「已下载待安装」提示的间隔（秒）—— 有包没装就一直提醒，但别太频繁。 */
+    public static final long INSTALL_PROMPT_INTERVAL = 300L;
+
+    /** 上次提示「发现新版本」的时间戳（秒）。 */
+    public static long updatePromptAt(Context c) {
+        return sp(c).getLong("update_prompt_at", 0L);
     }
 
-    public static void setPromptedCode(Context c, int v) {
-        sp(c).edit().putInt("prompted_code", v).apply();
+    public static void setUpdatePromptAt(Context c, long sec) {
+        sp(c).edit().putLong("update_prompt_at", sec).apply();
+    }
+
+    /**
+     * [1.0.3] 上次后台检查更新的时间戳（秒）。
+     * 通知轮询每 15 分钟跑一次，顺手搭车查更新，避免 6 小时的 update job 被 ROM 冻死后
+     * 用户永远不知道自己有新版本。
+     */
+    public static long lastUpdateCheckAt(Context c) {
+        return sp(c).getLong("update_check_at", 0L);
+    }
+
+    public static void setLastUpdateCheckAt(Context c, long sec) {
+        sp(c).edit().putLong("update_check_at", sec).apply();
+    }
+
+    /** 上次提示「有已下载的包待安装」的时间戳（秒）。 */
+    public static long installPromptAt(Context c) {
+        return sp(c).getLong("install_prompt_at", 0L);
+    }
+
+    public static void setInstallPromptAt(Context c, long sec) {
+        sp(c).edit().putLong("install_prompt_at", sec).apply();
     }
 
     /** 已经下载完、等着安装的新版本号（0 = 没有待安装包）。 */

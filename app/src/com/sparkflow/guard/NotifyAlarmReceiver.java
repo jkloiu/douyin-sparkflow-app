@@ -33,15 +33,19 @@ public class NotifyAlarmReceiver extends BroadcastReceiver {
                     NotifyJobService.poll(app);
                 } catch (Throwable t) {
                     Log.w(TAG, "poll: " + t);
-                } finally {
-                    try {
-                        NotifyJobService.scheduleAlarm(app);   // 自续下一次
-                    } catch (Throwable ignore) {
-                    }
-                    try {
-                        pr.finish();
-                    } catch (Throwable ignore) {
-                    }
+                }
+                try {
+                    UpdateJobService.checkIfDue(app);   // [1.0.3] 搭车查一次更新（6h 节流）
+                } catch (Throwable t) {
+                    Log.w(TAG, "update: " + t);
+                }
+                try {
+                    NotifyJobService.scheduleAlarm(app);   // 自续下一次
+                } catch (Throwable ignore) {
+                }
+                try {
+                    pr.finish();
+                } catch (Throwable ignore) {
                 }
             }
         }, "spark-alarm").start();

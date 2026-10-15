@@ -61,6 +61,12 @@ public class MainActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean tokenLoopRunning;
 
+    /* [1.0.3] 更新流程的 UI：下载进度对话框 + 安装提示（用字段防重复弹出） */
+    private AlertDialog dlDlg;
+    private ProgressBar dlBar;
+    private TextView dlTxt;
+    private AlertDialog installDlg;
+
     /** 每 20 秒把网页 localStorage 里的 panel_token 同步到本地，供后台任务用。 */
     private final Runnable tokenLoop = new Runnable() {
         public void run() {
@@ -118,11 +124,19 @@ public class MainActivity extends Activity {
         web.loadUrl(AppConfig.base(this) + AppConfig.PAGE_PATH);
         UpdateManager.check(this, new UpdateManager.CheckCb() {
             public void onResult(UpdateManager.Info info, String error) {
-                if (info != null && info.versionCode > AppConfig.VERSION_CODE) {
-                    maybePromptUpdate(info);
+                if (info == null || info.versionCode <= AppConfig.VERSION_CODE) {
+                    return;
                 }
+                // 已经下好待安装 → 直接提示装；否则才提示「发现新版本」
+                ui.post(new Runnable() {
+                    public void run() {
+                        checkPendingApk(false);
+                    }
+                });
+                maybePromptUpdate(info);
             }
         });
+        handleNotifyIntent(getIntent());   // [1.0.3] 进程被杀后从通知点进来也要能直接安装
     }
 
     private void showPull(float p) {
@@ -334,10 +348,38 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotifyIntent(intent);
+    }
+
+    @Override
     protected void onPause() {
         tokenLoopRunning = false;
         ui.removeCallbacks(tokenLoop);
         super.onPause();
+    }
+
+    /**
+     * [1.0.3] 通知点击入口。
+     * 之前 NotifyHelper 往 Intent 里塞了 from_notification，但没人读它 ——
+     * 所以点「已下载完成，点此安装」只是把 App 打开，永远走不到安装那一步。
+     */
+    private void handleNotifyIntent(Intent it) {
+        if (it == null) {
+            return;
+        }
+        final int id = it.getIntExtra("from_notification", 0);
+        if (id != NotifyHelper.ID_UPDATE && id != NotifyHelper.ID_UPDATE_PROGRESS) {
+            return;
+        }
+        it.removeExtra("from_notification");
+        ui.postDelayed(new Runnable() {
+            public void run() {
+                checkPendingApk(true);   // 从通知进来的：不受节流限制，立刻提示安装
+            }
+        }, 600);
     }
 
     @Override
@@ -384,85 +426,259 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 有下载完待安装的包 → 提示安装。 */
     private void checkPendingApk() {
+        checkPendingApk(false);
+    }
+
+    /**
+     * 有下载完待安装的包 → 提示安装。
+     * [1.0.3 修] 原来这里被 AppConfig.promptedCode 卡住：弹「发现新版本」时就写了这个标记，
+     * 导致下好包之后再也不提示安装。现在只做时间节流（force=true 时连节流都跳过）。
+     */
+    private void checkPendingApk(boolean force) {
         int code = AppConfig.pendingCode(this);
         if (code <= AppConfig.VERSION_CODE) {
             return;
         }
         File apk = new File(UpdateManager.updateDir(this), AppConfig.APK_TMP_NAME);
-        if (!apk.exists()) {
+        if (!apk.exists() || apk.length() < 1024) {
             AppConfig.setPendingCode(this, 0);
             return;
         }
-        if (AppConfig.promptedCode(this) == code) {
+        long now = System.currentTimeMillis() / 1000L;
+        if (!force && now - AppConfig.installPromptAt(this) < AppConfig.INSTALL_PROMPT_INTERVAL) {
             return;
         }
-        AppConfig.setPromptedCode(this, code);
+        AppConfig.setInstallPromptAt(this, now);
         promptInstall(apk);
     }
 
+    /**
+     * 拉起安装。
+     * [1.0.3 修] ① 统一 post 到主线程 —— 原来它是被下载线程直接调用的，
+     * AlertDialog 在非 UI 线程 show() 会抛异常，异常又被 UpdateManager.download 的
+     * catch 吞成 onError("下载失败…")，于是「明明下好了却提示失败、也没有安装提示」。
+     * ② 先检查「安装未知应用」权限，没授权就直接引导去开，而不是拉起一个必然失败的 Intent。
+     */
     private void promptInstall(final File apk) {
-        new AlertDialog.Builder(this)
-                .setTitle("安装新版本")
-                .setMessage("新版本已下载完成，点「安装」继续（系统会再确认一次）。")
-                .setPositiveButton("安装", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) {
-                        if (!UpdateManager.install(MainActivity.this, apk)) {
-                            toast("请先允许「安装未知应用」，再回到通知里点一次安装");
-                        }
+        ui.post(new Runnable() {
+            public void run() {
+                if (isFinishing() || installDlg != null) {
+                    return;
+                }
+                if (!UpdateManager.canInstall(MainActivity.this)) {
+                    try {
+                        installDlg = new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("还差一步：允许安装")
+                                .setMessage("新版本已经下载好了，但系统还要求你允许「火花守护」安装未知应用。\n\n"
+                                        + "点「去授权」，打开开关后回来就会自动拉起安装界面。")
+                                .setPositiveButton("去授权", new DialogInterface.OnClickListener() {
+                                    public void onClick(DialogInterface d, int w) {
+                                        installDlg = null;
+                                        UpdateManager.openInstallPermission(MainActivity.this);
+                                    }
+                                })
+                                .setNegativeButton("稍后", new DialogInterface.OnClickListener() {
+                                    public void onClick(DialogInterface d, int w) {
+                                        installDlg = null;
+                                    }
+                                })
+                                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                                    public void onCancel(DialogInterface d) {
+                                        installDlg = null;
+                                    }
+                                })
+                                .show();
+                    } catch (Throwable ignore) {
+                        installDlg = null;
                     }
-                })
-                .setNegativeButton("稍后", null)
-                .show();
-    }
-
-    private void maybePromptUpdate(final UpdateManager.Info info) {
-        if (AppConfig.promptedCode(this) == info.versionCode) {
-            return;
-        }
-        AppConfig.setPromptedCode(this, info.versionCode);
-        String note = info.notes == null || info.notes.length() == 0 ? "" : "\n\n" + info.notes;
-        AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle("发现新版本 " + info.versionName)
-                .setMessage("当前 " + AppConfig.VERSION_NAME + " → 最新 " + info.versionName + note)
-                .setCancelable(!info.force);
-        if (AppConfig.autoUpdate(this)) {
-            b.setPositiveButton("下载更新", new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface d, int w) {
-                    startDownload(info);
+                    return;
                 }
-            });
-            b.setNegativeButton("稍后", null);
-        } else {
-            b.setPositiveButton("立即更新", new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface d, int w) {
-                    startDownload(info);
+                try {
+                    installDlg = new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("安装新版本")
+                            .setMessage("新版本已下载完成，点「安装」继续（系统会再确认一次）。")
+                            .setPositiveButton("安装", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface d, int w) {
+                                    installDlg = null;
+                                    if (!UpdateManager.install(MainActivity.this, apk)) {
+                                        toast("拉起安装界面失败，请在文件管理里手动安装 "
+                                                + apk.getAbsolutePath());
+                                    }
+                                }
+                            })
+                            .setNegativeButton("稍后", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface d, int w) {
+                                    installDlg = null;
+                                }
+                            })
+                            .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                                public void onCancel(DialogInterface d) {
+                                    installDlg = null;
+                                }
+                            })
+                            .show();
+                } catch (Throwable ignore) {
+                    installDlg = null;
                 }
-            });
-            b.setNegativeButton("稍后", null);
-        }
-        try {
-            b.show();
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private void startDownload(final UpdateManager.Info info) {
-        toast("开始下载新版本…");
-        UpdateManager.download(this, info, new UpdateManager.DlCb() {
-            public void onProgress(int percent) {
-            }
-
-            public void onDone(File apk) {
-                AppConfig.setPendingCode(MainActivity.this, info.versionCode);
-                promptInstall(apk);
-            }
-
-            public void onError(String msg) {
-                toast("下载失败：" + msg);
             }
         });
+    }
+
+    /**
+     * 「发现新版本」弹窗。
+     * [1.0.3 修] 两个致命问题：
+     *  ① 它在 UpdateManager.check 的回调里被直接调用 —— 那是后台线程，AlertDialog.show()
+     *     在非 UI 线程会抛异常，而异常被这里空的 catch 吞掉 → **用户永远看不到这个弹窗**。
+     *     现在统一 post 到主线程。
+     *  ② 原来用 promptedCode 做「只提示一次」，一旦提示过（哪怕点了「稍后」、哪怕下载失败）
+     *     就再也不会提醒。改成 6 小时一次的时间节流，直到真的升级上去。
+     */
+    private void maybePromptUpdate(final UpdateManager.Info info) {
+        ui.post(new Runnable() {
+            public void run() {
+                if (isFinishing()) {
+                    return;
+                }
+                long now = System.currentTimeMillis() / 1000L;
+                if (now - AppConfig.updatePromptAt(MainActivity.this) < AppConfig.PROMPT_INTERVAL) {
+                    return;
+                }
+                AppConfig.setUpdatePromptAt(MainActivity.this, now);
+                String note = info.notes == null || info.notes.length() == 0 ? "" : "\n\n" + info.notes;
+                try {
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("发现新版本 " + info.versionName)
+                            .setMessage("当前 " + AppConfig.VERSION_NAME + " → 最新 " + info.versionName + note)
+                            .setCancelable(!info.force)
+                            .setPositiveButton("下载更新", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface d, int w) {
+                                    startDownload(info);
+                                }
+                            })
+                            .setNegativeButton("稍后", null)
+                            .show();
+                } catch (Throwable t) {
+                    Log.w(TAG, "prompt: " + t);
+                }
+            }
+        });
+    }
+
+    /**
+     * [1.0.3] 下载新版本：App 内一个带百分比的进度对话框 + 通知栏一条带进度条的通知
+     * （切后台/息屏也能看到进展）。原来 onProgress 是空的，所以「看不了进度条」。
+     */
+    private void startDownload(final UpdateManager.Info info) {
+        dismissDownloadDlg();
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        box.setPadding(pad, dp(12), pad, dp(2));
+        dlTxt = new TextView(this);
+        dlTxt.setText("正在连接服务器…");
+        dlTxt.setTextSize(13);
+        dlTxt.setTextColor(Color.parseColor("#8B95A7"));
+        box.addView(dlTxt);
+        dlBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        dlBar.setMax(100);
+        dlBar.setProgress(0);
+        dlBar.setIndeterminate(true);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(6));
+        lp.topMargin = dp(14);
+        box.addView(dlBar, lp);
+
+        try {
+            dlDlg = new AlertDialog.Builder(this)
+                    .setTitle("更新到 " + info.versionName)
+                    .setView(box)
+                    .setCancelable(false)
+                    .setPositiveButton("后台下载", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) {
+                            dismissDownloadDlg();
+                            toast("已转入后台下载，通知栏可以看到进度");
+                        }
+                    })
+                    .show();
+        } catch (Throwable t) {
+            Log.w(TAG, "dlg: " + t);
+            dlDlg = null;
+        }
+
+        NotifyHelper.showProgress(this, NotifyHelper.ID_UPDATE_PROGRESS,
+                "正在下载 火花守护 " + info.versionName, "0%", 0, true);
+
+        UpdateManager.download(this, info, new UpdateManager.DlCb() {
+            public void onProgress(final long got, final long total) {
+                final int pct = total > 0 ? (int) (got * 100L / total) : -1;
+                final String txt = total > 0
+                        ? (mb(got) + " / " + mb(total) + "（" + pct + "%）")
+                        : ("已下载 " + mb(got));
+                ui.post(new Runnable() {
+                    public void run() {
+                        if (dlTxt != null) {
+                            dlTxt.setText("正在下载 " + info.versionName + " … " + txt);
+                        }
+                        if (dlBar != null) {
+                            if (pct >= 0) {
+                                dlBar.setIndeterminate(false);
+                                dlBar.setProgress(pct);
+                            } else {
+                                dlBar.setIndeterminate(true);
+                            }
+                        }
+                        NotifyHelper.showProgress(MainActivity.this, NotifyHelper.ID_UPDATE_PROGRESS,
+                                "正在下载 火花守护 " + info.versionName, txt,
+                                pct < 0 ? 0 : pct, pct < 0);
+                    }
+                });
+            }
+
+            public void onDone(final File apk) {
+                ui.post(new Runnable() {
+                    public void run() {
+                        dismissDownloadDlg();
+                        AppConfig.setPendingCode(MainActivity.this, info.versionCode);
+                        NotifyHelper.cancel(MainActivity.this, NotifyHelper.ID_UPDATE_PROGRESS);
+                        NotifyHelper.show(MainActivity.this, NotifyHelper.ID_UPDATE,
+                                "火花守护 " + info.versionName + " 已下载完成",
+                                "点此安装新版本（系统会再确认一次）");
+                        promptInstall(apk);
+                    }
+                });
+            }
+
+            public void onError(final String msg) {
+                ui.post(new Runnable() {
+                    public void run() {
+                        dismissDownloadDlg();
+                        NotifyHelper.cancel(MainActivity.this, NotifyHelper.ID_UPDATE_PROGRESS);
+                        toast("下载失败：" + msg);
+                    }
+                });
+            }
+        });
+    }
+
+    private void dismissDownloadDlg() {
+        if (dlDlg != null) {
+            try {
+                dlDlg.dismiss();
+            } catch (Throwable ignore) {
+            }
+            dlDlg = null;
+        }
+        dlTxt = null;
+        dlBar = null;
+    }
+
+    private String mb(long bytes) {
+        if (bytes >= 1048576L) {
+            return String.format(java.util.Locale.US, "%.2f MB", bytes / 1048576.0);
+        }
+        return String.format(java.util.Locale.US, "%.0f KB", bytes / 1024.0);
     }
 
     /* ================================================================== */
@@ -596,7 +812,7 @@ public class MainActivity extends Activity {
                             return;
                         }
                         if (info.versionCode > AppConfig.VERSION_CODE) {
-                            AppConfig.setPromptedCode(MainActivity.this, 0);
+                            AppConfig.setUpdatePromptAt(MainActivity.this, 0);   // 手动检查 → 无视节流，必定弹
                             maybePromptUpdate(info);
                         } else {
                             new AlertDialog.Builder(MainActivity.this)

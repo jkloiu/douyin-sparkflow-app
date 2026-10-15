@@ -41,7 +41,11 @@ public final class UpdateManager {
     }
 
     public interface DlCb {
-        void onProgress(int percent);
+        /**
+         * [1.0.3] 传原始字节数而不是百分比：服务端没给 Content-Length 时 total = -1，
+         * 调用方仍能显示「已下载 x.x MB」，不会像以前那样直接没有任何进度。
+         */
+        void onProgress(long got, long total);
 
         void onDone(File apk);
 
@@ -105,16 +109,17 @@ public final class UpdateManager {
                     if (dest.exists()) {
                         dest.delete();
                     }
-                    long total = -1;
                     Http.download(info.url, dest, new Http.Progress() {
                         public void onProgress(long got, long totalBytes) {
-                            if (cb != null && totalBytes > 0) {
-                                cb.onProgress((int) (got * 100 / totalBytes));
+                            if (cb != null) {
+                                cb.onProgress(got, totalBytes);
                             }
                         }
                     });
                     if (!dest.exists() || dest.length() < 1024) {
-                        cb.onError("下载文件异常");
+                        if (cb != null) {
+                            cb.onError("下载文件异常（只有 " + (dest.exists() ? dest.length() : 0) + " 字节）");
+                        }
                         return;
                     }
                     if (info.md5 != null && info.md5.length() > 0) {
@@ -173,7 +178,13 @@ public final class UpdateManager {
             return false;
         }
         try {
-            Uri uri = Uri.parse("content://" + AppConfig.AUTHORITY + "/" + apk.getName());
+            /*
+             * ⚠️ [1.0.3 修] 这里原来少了一段路径：content://<authority>/<文件名>，
+             * 而 SimpleFileProvider.resolve() 要求第一段必须是 "update"（目录穿越防护），
+             * 于是系统安装器 openFile 直接 FileNotFoundException —— 表现就是
+             * 「点了安装没反应 / 安装界面闪一下就没了」。改成 /update/<文件名>。
+             */
+            Uri uri = Uri.parse("content://" + AppConfig.AUTHORITY + "/update/" + apk.getName());
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, "application/vnd.android.package-archive");
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

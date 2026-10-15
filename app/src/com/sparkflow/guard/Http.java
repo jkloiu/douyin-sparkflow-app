@@ -41,7 +41,7 @@ public final class Http {
         HttpURLConnection conn = open(url);
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(CONNECT_MS);
-        conn.setReadTimeout(READ_MS);
+        conn.setReadTimeout(30000);   // 下载 APK 用更宽裕的超时（12s 容易在弱网下被掐断）
         int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
             conn.disconnect();

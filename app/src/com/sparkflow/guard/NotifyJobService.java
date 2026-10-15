@@ -119,6 +119,7 @@ public class NotifyJobService extends JobService {
             public void run() {
                 try {
                     poll(getApplicationContext());
+                    UpdateJobService.checkIfDue(getApplicationContext());   // [1.0.3] 搭车查更新（6h 节流）
                 } catch (Throwable t) {
                     Log.w(TAG, "poll failed: " + t);
                 } finally {
